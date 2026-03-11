@@ -1,0 +1,78 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": [
+          "listingId",
+          "title",
+          "summary",
+          "propertyType",
+          "location",
+          "city",
+          "state",
+          "offerPrice",
+          "priceCurrency",
+          "availability",
+          "url",
+          "sourceSearchUrl"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "listingId": {
+            "label": "Listing ID",
+            "format": "text"
+          },
+          "title": {
+            "label": "Title",
+            "format": "text"
+          },
+          "summary": {
+            "label": "Summary",
+            "format": "text"
+          },
+          "propertyType": {
+            "label": "Property Type",
+            "format": "text"
+          },
+          "location": {
+            "label": "Location",
+            "format": "text"
+          },
+          "city": {
+            "label": "City",
+            "format": "text"
+          },
+          "state": {
+            "label": "State",
+            "format": "text"
+          },
+          "offerPrice": {
+            "label": "Offer Price",
+            "format": "number"
+          },
+          "priceCurrency": {
+            "label": "Currency",
+            "format": "text"
+          },
+          "availability": {
+            "label": "Availability",
+            "format": "text"
+          },
+          "url": {
+            "label": "URL",
+            "format": "link"
+          },
+          "sourceSearchUrl": {
+            "label": "Source Search URL",
+            "format": "link"
+          }
+        }
+      }
+    }
+  }
+}

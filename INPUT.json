@@ -1,0 +1,7 @@
+{
+  "startUrl": "https://www.loopnet.com/search/commercial-real-estate/new-york-ny/for-sale/",
+  "results_wanted": 20,
+  "max_pages": 3,
+  "collectDetails": false,
+  "maxConcurrency": 4
+}
