@@ -29,7 +29,10 @@ function sanitizeSearchUrl(value, base = LOOPNET_ORIGIN) {
         if (parsed.hostname !== 'www.loopnet.com' && !parsed.hostname.endsWith('.loopnet.com')) return null;
         parsed.search = '';
         parsed.hash = '';
+        parsed.pathname = parsed.pathname.replace(/\/map\/?$/i, '/');
         if (!parsed.pathname.endsWith('/')) parsed.pathname = `${parsed.pathname}/`;
+        if (!parsed.pathname.toLowerCase().startsWith('/search/')) return null;
+        if (!/\/(for-sale|for-lease|auctions)(?:\/\d+)?\/$/i.test(parsed.pathname)) return null;
         return parsed.toString();
     } catch {
         return null;
@@ -325,6 +328,7 @@ async function bootstrapSearchSession(page, startUrl) {
                 ok: false,
                 title: document.title,
                 htmlLength: html.length,
+                csrfToken,
                 reason: 'Missing LoopNet viewdata bootstrap payload.',
             };
         }
@@ -360,6 +364,7 @@ async function bootstrapSearchSession(page, startUrl) {
                 ok: false,
                 title: document.title,
                 htmlLength: html.length,
+                csrfToken,
                 reason: 'Missing CSRF token or incomplete viewdata payload.',
             };
         }
@@ -377,6 +382,7 @@ async function bootstrapSearchSession(page, startUrl) {
                 ok: false,
                 title: document.title,
                 htmlLength: html.length,
+                csrfToken,
                 reason: `Could not parse viewdata payload: ${error.message}`,
             };
         }
@@ -488,25 +494,16 @@ async function runApiExtraction(startUrl, proxyUrl, resultsWanted, maxPages, sav
     });
 
     const page = await browserContext.newPage();
-    await page.route('**/*', (route) => {
-        const type = route.request().resourceType();
-        const url = route.request().url();
-        if (
-            ['image', 'font', 'media', 'stylesheet'].includes(type) ||
-            /google-analytics|googletagmanager|doubleclick|facebook\.net|criteo|mpulse|analytics/i.test(url)
-        ) {
-            return route.abort();
-        }
-        return route.continue();
-    });
 
     let totalSaved = savedCount;
 
     try {
         let bootstrap = await bootstrapSearchSession(page, startUrl);
         if (!bootstrap.ok || !bootstrap.criteria) {
+            const browserCsrfToken = bootstrap.csrfToken;
             log.warning('Browser bootstrap did not expose API criteria; trying mobile HTTP bootstrap', bootstrap);
             bootstrap = await bootstrapSearchViaHttp(startUrl);
+            if (bootstrap.ok && browserCsrfToken) bootstrap.csrfToken = browserCsrfToken;
         }
 
         if (!bootstrap.ok || !bootstrap.criteria) {
@@ -565,7 +562,15 @@ async function runApiExtraction(startUrl, proxyUrl, resultsWanted, maxPages, sav
 
         return totalSaved;
     } catch (err) {
-        log.exception(err, 'API extraction error');
+        const message = err?.message || String(err);
+        if (message.includes('ERR_INVALID_AUTH_CREDENTIALS')) {
+            log.warning('Proxy authentication failed during browser bootstrap; this proxy attempt will be skipped', {
+                startUrl,
+                usedProxy: Boolean(proxyUrl),
+            });
+        } else {
+            log.exception(err, 'API extraction error');
+        }
         return totalSaved;
     } finally {
         await page.close();
@@ -595,26 +600,24 @@ async function main() {
         rawStartUrls.push(baseSearchUrl({ propertySegment, location, listingType: effectiveListingType }));
     }
 
-    const preparedStarts = [...new Set(rawStartUrls.map((value) => sanitizeSearchUrl(value)).filter(Boolean))];
-    if (preparedStarts.length === 0) throw new Error('Unable to build a valid LoopNet start URL from input.');
+    let preparedStarts = [...new Set(rawStartUrls.map((value) => sanitizeSearchUrl(value)).filter(Boolean))];
+    if (preparedStarts.length === 0) {
+        const fallbackUrl = baseSearchUrl({ propertySegment, location, listingType: effectiveListingType });
+        preparedStarts = [fallbackUrl];
+        if (rawStartUrls.length > 0) {
+            log.warning('Provided startUrl was not a LoopNet search URL; using location/listingType fallback', {
+                fallbackUrl,
+            });
+        }
+    }
 
     let proxyConfiguration;
     if (proxyInput) {
         const hasCustomProxyUrls = Array.isArray(proxyInput.proxyUrls) && proxyInput.proxyUrls.length > 0;
-        const requestsApifyProxy = proxyInput.useApifyProxy !== false && !hasCustomProxyUrls;
+        const requestsApifyProxy = proxyInput.useApifyProxy === true && !hasCustomProxyUrls;
         if (hasCustomProxyUrls || requestsApifyProxy) {
-            proxyConfiguration = await Actor.createProxyConfiguration({
-                useApifyProxy: true,
-                apifyProxyGroups: ['RESIDENTIAL'],
-                ...proxyInput,
-            });
+            proxyConfiguration = await Actor.createProxyConfiguration(proxyInput);
         }
-    } else if (process.env.APIFY_TOKEN || process.env.APIFY_PROXY_PASSWORD) {
-        proxyConfiguration = await Actor.createProxyConfiguration({
-            useApifyProxy: true,
-            apifyProxyGroups: ['RESIDENTIAL'],
-        });
-        log.info('Defaulting to Apify RESIDENTIAL proxy');
     }
 
     log.info('Starting LoopNet API scraper', {
@@ -624,13 +627,31 @@ async function main() {
         maxPages,
     });
 
-    const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
     const seenListings = new Set();
     let totalSaved = 0;
 
     for (const start of preparedStarts) {
         if (totalSaved >= resultsWanted) break;
-        totalSaved = await runApiExtraction(start, proxyUrl, resultsWanted, maxPages, totalSaved, seenListings);
+
+        const savedBeforeStart = totalSaved;
+        const proxyAttempts = [];
+        if (proxyConfiguration) {
+            proxyAttempts.push(await proxyConfiguration.newUrl(`loopnet-${Date.now()}-1`));
+            proxyAttempts.push(await proxyConfiguration.newUrl(`loopnet-${Date.now()}-2`));
+        }
+        proxyAttempts.push(undefined);
+
+        for (const proxyUrl of proxyAttempts) {
+            if (totalSaved >= resultsWanted) break;
+            const savedBeforeAttempt = totalSaved;
+            totalSaved = await runApiExtraction(start, proxyUrl, resultsWanted, maxPages, totalSaved, seenListings);
+            if (totalSaved > savedBeforeAttempt) break;
+            if (proxyUrl) log.warning('Retrying LoopNet extraction with a different proxy mode');
+        }
+
+        if (totalSaved === savedBeforeStart) {
+            log.warning('No records saved for start URL after all proxy modes', { start });
+        }
     }
 
     log.info('LoopNet API scrape complete', { savedCount: totalSaved, resultsWanted });

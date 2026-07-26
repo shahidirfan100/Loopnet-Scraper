@@ -52,6 +52,11 @@ The endpoint works after a Patchright Chrome session loads a LoopNet search page
 - A non-listing SVG logo appeared in gallery extraction; fixed by allowing only `images1.loopnet.com` URLs.
 - Some records lacked a headline element; fixed by falling back to the listing link title.
 - Unused direct `https-proxy-agent` dependency was removed. Runtime dependencies are now `apify`, `cheerio`, and `patchright`.
+- Proxy is optional. The actor no longer auto-enables Apify Residential proxy from environment variables and no longer forces the `RESIDENTIAL` group onto user proxy settings. If the user selects a proxy in `input_schema.json`, the actor uses that exact proxy configuration; if proxy authentication fails, it retries with another proxy session and then without proxy.
+- `ERR_INVALID_AUTH_CREDENTIALS` from browser navigation is handled as a proxy-auth failure instead of a hard actor error.
+- Map-view URLs such as `?view=map` and `/map/` are normalized to the equivalent LoopNet search URL before bootstrap.
+- Non-search LoopNet URLs such as listing detail pages are not used as bootstrap targets. They fall back to the configured `location` and `listingType` search URL and log a warning, so the actor can still complete instead of trying to parse a listing page as a search page.
+- Search URLs are validated before use; only `/search/.../(for-sale|for-lease|auctions)/` paths are accepted as direct start URLs.
 
 ## Local Validation Results
 - `npm run lint`: passed.
@@ -60,6 +65,9 @@ The endpoint works after a Patchright Chrome session loads a LoopNet search page
 - Dataset check after local run: 20 records, 0 duplicate listing IDs, 0 duplicate URLs, 0 null or empty saved fields.
 - Image coverage: 20/20 records had `imageUrl`; 20/20 records had `galleryUrls`; gallery size ranged from 3 to 24 property-photo URLs per record.
 - Coordinate coverage: 18/20 records had latitude and longitude. The remaining records did not expose coordinates in the search endpoint map pins for this run.
+- Washington DC lease URL without proxy: local run succeeded.
+- Washington DC lease URL with `?view=map` without proxy: local run succeeded after URL normalization.
+- Listing detail URL input: local run fell back to a valid search URL and succeeded.
 
 ## Required Runtime Details
 - Headers: `accept: application/json, text/plain, */*`, `content-type: application/json;charset=UTF-8`, `RequestVerificationToken`, `x-page-loopnetarea: SRP-Client`.
