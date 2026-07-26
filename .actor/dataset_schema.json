@@ -1,78 +1,98 @@
 {
-  "actorSpecification": 1,
-  "fields": {},
-  "views": {
-    "overview": {
-      "title": "Overview",
-      "transformation": {
-        "fields": [
-          "listingId",
-          "title",
-          "summary",
-          "propertyType",
-          "location",
-          "city",
-          "state",
-          "offerPrice",
-          "priceCurrency",
-          "availability",
-          "url",
-          "sourceSearchUrl"
-        ]
-      },
-      "display": {
-        "component": "table",
-        "properties": {
-          "listingId": {
-            "label": "Listing ID",
-            "format": "text"
-          },
-          "title": {
-            "label": "Title",
-            "format": "text"
-          },
-          "summary": {
-            "label": "Summary",
-            "format": "text"
-          },
-          "propertyType": {
-            "label": "Property Type",
-            "format": "text"
-          },
-          "location": {
-            "label": "Location",
-            "format": "text"
-          },
-          "city": {
-            "label": "City",
-            "format": "text"
-          },
-          "state": {
-            "label": "State",
-            "format": "text"
-          },
-          "offerPrice": {
-            "label": "Offer Price",
-            "format": "number"
-          },
-          "priceCurrency": {
-            "label": "Currency",
-            "format": "text"
-          },
-          "availability": {
-            "label": "Availability",
-            "format": "text"
-          },
-          "url": {
-            "label": "URL",
-            "format": "link"
-          },
-          "sourceSearchUrl": {
-            "label": "Source Search URL",
-            "format": "link"
-          }
+    "actorSpecification": 1,
+    "fields": {},
+    "views": {
+        "overview": {
+            "title": "Overview",
+            "transformation": {
+                "fields": [
+                    "listingId",
+                    "title",
+                    "propertyType",
+                    "listingType",
+                    "city",
+                    "state",
+                    "postalCode",
+                    "latitude",
+                    "longitude",
+                    "squareFeet",
+                    "offeringPrice",
+                    "imageUrl",
+                    "galleryUrls",
+                    "url",
+                    "sourceSearchUrl",
+                    "searchPage"
+                ]
+            },
+            "display": {
+                "component": "table",
+                "properties": {
+                    "listingId": {
+                        "label": "Listing ID",
+                        "format": "text"
+                    },
+                    "title": {
+                        "label": "Title",
+                        "format": "text"
+                    },
+                    "propertyType": {
+                        "label": "Property Type",
+                        "format": "text"
+                    },
+                    "listingType": {
+                        "label": "Listing Type",
+                        "format": "text"
+                    },
+                    "city": {
+                        "label": "City",
+                        "format": "text"
+                    },
+                    "state": {
+                        "label": "State",
+                        "format": "text"
+                    },
+                    "postalCode": {
+                        "label": "Postal Code",
+                        "format": "text"
+                    },
+                    "latitude": {
+                        "label": "Latitude",
+                        "format": "number"
+                    },
+                    "longitude": {
+                        "label": "Longitude",
+                        "format": "number"
+                    },
+                    "squareFeet": {
+                        "label": "Square Feet",
+                        "format": "text"
+                    },
+                    "offeringPrice": {
+                        "label": "Offering Price",
+                        "format": "text"
+                    },
+                    "imageUrl": {
+                        "label": "Primary Image",
+                        "format": "link"
+                    },
+                    "galleryUrls": {
+                        "label": "Gallery URLs",
+                        "format": "array"
+                    },
+                    "url": {
+                        "label": "URL",
+                        "format": "link"
+                    },
+                    "sourceSearchUrl": {
+                        "label": "Source Search URL",
+                        "format": "link"
+                    },
+                    "searchPage": {
+                        "label": "Search Page",
+                        "format": "number"
+                    }
+                }
+            }
         }
-      }
     }
-  }
 }

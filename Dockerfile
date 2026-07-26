@@ -1,8 +1,17 @@
-FROM apify/actor-node-playwright-firefox:22-1.58.2
+FROM apify/actor-node-playwright-chrome:22
 
-COPY package*.json ./
-RUN npm install --omit=dev --omit=optional --ignore-scripts
+COPY --chown=myuser:myuser package*.json Dockerfile ./
 
-COPY . ./
+RUN npm --quiet set progress=false \
+    && npm install --omit=dev --omit=optional \
+    && echo "Installed NPM packages:" \
+    && (npm list --omit=dev --all || true) \
+    && echo "Node.js version:" \
+    && node --version \
+    && echo "NPM version:" \
+    && npm --version \
+    && rm -r ~/.npm
 
-CMD ["npm", "start", "--silent"]
+COPY --chown=myuser:myuser . ./
+
+CMD npm start --silent

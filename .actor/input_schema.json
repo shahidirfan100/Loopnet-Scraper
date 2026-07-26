@@ -1,54 +1,54 @@
 {
-  "title": "LoopNet Commercial Real Estate Scraper",
-  "description": "Extract commercial real estate listings from LoopNet search result pages.",
-  "type": "object",
-  "schemaVersion": 1,
-  "properties": {
-    "startUrl": {
-      "title": "Start URL",
-      "type": "string",
-      "description": "Search page URL to start from. Query/hash parts like ?view=map are ignored automatically. If URL already contains /for-sale/ or /for-lease/, that transaction type is used.",
-      "editor": "textfield",
-      "prefill": "https://www.loopnet.com/search/commercial-real-estate/new-york-ny/for-sale/"
+    "title": "LoopNet Commercial Real Estate Scraper",
+    "description": "Extract commercial real estate listings from LoopNet search result pages.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "startUrl": {
+            "title": "Start URL",
+            "type": "string",
+            "description": "Search page URL to start from. Query/hash parts like ?view=map are ignored automatically. If URL already contains /for-sale/ or /for-lease/, that transaction type is used.",
+            "editor": "textfield",
+            "prefill": "https://www.loopnet.com/search/commercial-real-estate/new-york-ny/for-sale/"
+        },
+        "listingType": {
+            "title": "Listing Type",
+            "type": "string",
+            "description": "Fallback transaction type used only when Start URL does not already include it.",
+            "editor": "select",
+            "enum": ["for-sale", "for-lease"],
+            "enumTitles": ["For Sale", "For Lease"],
+            "prefill": "for-sale",
+            "default": "for-sale"
+        },
+        "results_wanted": {
+            "title": "Maximum Listings",
+            "type": "integer",
+            "description": "Maximum number of records to save.",
+            "minimum": 1,
+            "editor": "number",
+            "prefill": 20,
+            "default": 20
+        },
+        "max_pages": {
+            "title": "Maximum Pages",
+            "type": "integer",
+            "description": "Safety cap for paginated search pages.",
+            "minimum": 1,
+            "editor": "number",
+            "prefill": 3,
+            "default": 10
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "type": "object",
+            "description": "Use Apify Proxy to improve reliability.",
+            "editor": "proxy",
+            "default": {
+                "useApifyProxy": false
+            }
+        }
     },
-    "listingType": {
-      "title": "Listing Type",
-      "type": "string",
-      "description": "Fallback transaction type used only when Start URL does not already include it.",
-      "editor": "select",
-      "enum": ["for-sale", "for-lease"],
-      "enumTitles": ["For Sale", "For Lease"],
-      "prefill": "for-sale",
-      "default": "for-sale"
-    },
-    "results_wanted": {
-      "title": "Maximum Listings",
-      "type": "integer",
-      "description": "Maximum number of records to save.",
-      "minimum": 1,
-      "editor": "number",
-      "prefill": 20,
-      "default": 20
-    },
-    "max_pages": {
-      "title": "Maximum Pages",
-      "type": "integer",
-      "description": "Safety cap for paginated search pages.",
-      "minimum": 1,
-      "editor": "number",
-      "prefill": 3,
-      "default": 10
-    },
-    "proxyConfiguration": {
-      "title": "Proxy Configuration",
-      "type": "object",
-      "description": "Use Apify Proxy to improve reliability.",
-      "editor": "proxy",
-      "default": {
-        "useApifyProxy": false
-      }
-    }
-  },
-  "required": [],
-  "additionalProperties": false
+    "required": [],
+    "additionalProperties": false
 }

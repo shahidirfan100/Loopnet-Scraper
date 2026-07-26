@@ -1,29 +1,18 @@
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { Actor, log } from 'apify';
 import { load as cheerioLoad } from 'cheerio';
-import { firefox } from 'playwright';
-import { readFile } from 'node:fs/promises';
+import { chromium } from 'patchright';
 
 await Actor.init();
 
-const USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 15.7; rv:147.0) Gecko/20100101 Firefox/147.0',
-    'Mozilla/5.0 (X11; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0',
-];
-
-const BLOCKED_HOST_PATTERNS = [/google-analytics/i, /googletagmanager/i, /doubleclick/i, /facebook/i, /crazyegg/i];
-const LISTING_SIGNALS_PATTERN = /data-gtm-listing[_-]id=|data-gtm-listing[_-]id|<article[^>]*class=["'][^"']*placard|RealEstateListing/i;
-const CHALLENGE_SIGNALS_PATTERN = /sec-if-cpt-container|Powered and protected by|\/akam\//i;
-const AVAILABLE_AVAILABILITY_TOKENS = new Set(['instock', 'limitedavailability', 'presale', 'preorder', 'onlineonly']);
-const UNAVAILABLE_AVAILABILITY_TOKENS = new Set(['outofstock', 'soldout', 'discontinued']);
-
+const LOOPNET_ORIGIN = 'https://www.loopnet.com';
+const MOBILE_USER_AGENT =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 function parsePositiveInt(value, fallback) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function valueOrFallback(value, fallback) {
@@ -32,36 +21,19 @@ function valueOrFallback(value, fallback) {
     return value;
 }
 
-function parseBoolean(value, fallback) {
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === 'true') return true;
-        if (normalized === 'false') return false;
-    }
-    return fallback;
-}
-
-function normalizeUrl(value, base = 'https://www.loopnet.com') {
+function sanitizeSearchUrl(value, base = LOOPNET_ORIGIN) {
     if (!value || typeof value !== 'string') return null;
+
     try {
-        return new URL(value, base).toString();
+        const parsed = new URL(value, base);
+        if (parsed.hostname !== 'www.loopnet.com' && !parsed.hostname.endsWith('.loopnet.com')) return null;
+        parsed.search = '';
+        parsed.hash = '';
+        if (!parsed.pathname.endsWith('/')) parsed.pathname = `${parsed.pathname}/`;
+        return parsed.toString();
     } catch {
         return null;
     }
-}
-
-function sanitizeSearchUrl(value, base = 'https://www.loopnet.com') {
-    const normalized = normalizeUrl(value, base);
-    if (!normalized) return null;
-
-    const parsed = new URL(normalized);
-    parsed.search = '';
-    parsed.hash = '';
-
-    if (!parsed.pathname.endsWith('/')) parsed.pathname = `${parsed.pathname}/`;
-
-    return parsed.toString();
 }
 
 function listingTypeFromUrl(value) {
@@ -73,38 +45,8 @@ function listingTypeFromUrl(value) {
     return match ? match[1].toLowerCase() : null;
 }
 
-function cleanText(value) {
-    return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function hasListingSignals(html) {
-    return LISTING_SIGNALS_PATTERN.test(html || '');
-}
-
-function hasChallengeSignals(html) {
-    return CHALLENGE_SIGNALS_PATTERN.test(html || '');
-}
-
-function availabilityToken(value) {
-    if (value === undefined || value === null) return undefined;
-    if (typeof value === 'boolean') return value ? 'instock' : 'outofstock';
-
-    const normalized = cleanText(value).toLowerCase();
-    if (!normalized) return undefined;
-
-    const noFragment = normalized.split('#').pop() || normalized;
-    const lastSegment = noFragment.split('/').pop() || noFragment;
-    const token = lastSegment.replace(/[^a-z]/g, '');
-
-    return token || undefined;
-}
-
-function normalizeAvailability(value) {
-    const token = availabilityToken(value);
-    if (!token) return undefined;
-    if (AVAILABLE_AVAILABILITY_TOKENS.has(token)) return 'available';
-    if (UNAVAILABLE_AVAILABILITY_TOKENS.has(token)) return 'not_available';
-    return token;
+function baseSearchUrl({ propertySegment, location, listingType }) {
+    return `${LOOPNET_ORIGIN}/search/${propertySegment}/${location}/${listingType}/`;
 }
 
 function compactValue(value) {
@@ -112,12 +54,12 @@ function compactValue(value) {
 
     if (typeof value === 'string') {
         const trimmed = value.trim();
-        return trimmed ? trimmed : undefined;
+        return trimmed || undefined;
     }
 
     if (Array.isArray(value)) {
-        const arr = value.map(compactValue).filter((item) => item !== undefined);
-        return arr.length ? arr : undefined;
+        const compacted = value.map(compactValue).filter((item) => item !== undefined);
+        return compacted.length ? compacted : undefined;
     }
 
     if (typeof value === 'object') {
@@ -136,471 +78,522 @@ function compactRecord(record) {
     return compactValue(record) || {};
 }
 
-function parseJsonSafe(raw) {
-    if (!raw || typeof raw !== 'string') return null;
-    try {
-        return JSON.parse(raw);
-    } catch {
-        return null;
-    }
-}
-
-function listingIdFromUrl(value) {
+function absoluteUrl(value) {
     if (!value) return undefined;
-    const match = String(value).match(/\/(\d+)\/?(?:\?.*)?$/);
-    return match ? match[1] : undefined;
-}
-
-function firstImageUrl(article) {
-    const src = article.find('img[src], img[lazy-src]').first().attr('src') || article.find('img[src], img[lazy-src]').first().attr('lazy-src');
-    if (src) return src;
-
-    const style = article.find('figure[style]').first().attr('style') || '';
-    const match = style.match(/url\(([^)]+)\)/i);
-    return match ? match[1].replace(/["']/g, '') : undefined;
-}
-
-function normalizeType(typeValue) {
-    if (!typeValue) return '';
-    if (Array.isArray(typeValue)) return typeValue.join(',');
-    return String(typeValue);
-}
-
-function extractJsonLdListings($, pageUrl) {
-    const listingsByKey = new Map();
-
-    $('script[type="application/ld+json"]').each((_, element) => {
-        const parsed = parseJsonSafe($(element).html() || '');
-        if (!parsed) return;
-
-        const candidates = [];
-        const pushItems = (node) => {
-            if (!node) return;
-            if (Array.isArray(node)) {
-                node.forEach(pushItems);
-                return;
-            }
-            if (node.mainEntity?.itemListElement) pushItems(node.mainEntity.itemListElement);
-            if (node.itemListElement) pushItems(node.itemListElement);
-            if (node.item) pushItems(node.item);
-            candidates.push(node);
-        };
-
-        pushItems(parsed);
-
-        for (const candidate of candidates) {
-            const typeName = normalizeType(candidate['@type'] || candidate.type).toLowerCase();
-            const rawUrl = candidate.url || candidate['@id'] || candidate.mainEntityOfPage?.['@id'];
-            const listingUrl = normalizeUrl(rawUrl);
-
-            if (!listingUrl) continue;
-            if (!typeName.includes('realestate') && !/\/listing\//i.test(listingUrl)) continue;
-
-            const offers = Array.isArray(candidate.offers) ? candidate.offers[0] : candidate.offers;
-            const address = candidate.spatialCoverage?.address || candidate.address;
-            const listingId = listingIdFromUrl(listingUrl);
-
-            const record = compactRecord({
-                listingId,
-                title: candidate.name || candidate.headline,
-                description: candidate.description,
-                url: listingUrl,
-                imageUrl: candidate.image,
-                propertyType: candidate.additionalType,
-                addressLine: candidate.spatialCoverage?.name,
-                city: address?.addressLocality,
-                state: address?.addressRegion,
-                postalCode: address?.postalCode,
-                offerPrice: offers?.price,
-                priceCurrency: offers?.priceCurrency,
-                offerValidThrough: offers?.validThrough,
-                availability: normalizeAvailability(offers?.availability),
-                sourceSearchUrl: pageUrl,
-            });
-
-            const key = record.listingId || record.url;
-            if (key) listingsByKey.set(key, record);
-        }
-    });
-
-    return listingsByKey;
-}
-
-function extractPlacardListings($, pageUrl, pageNo) {
-    const ldMap = extractJsonLdListings($, pageUrl);
-    const listings = [];
-
-    $('article.placard').each((_, element) => {
-        const article = $(element);
-        const listingId = article.attr('data-gtm-listing_id') || article.attr('gtm-listing-id') || article.attr('data-id');
-        const url = normalizeUrl(article.find('a[href*="/Listing/"]').first().attr('href') || '');
-
-        if (!listingId && !url) return;
-
-        const title = cleanText(article.find('a.left-h6').first().text());
-        const locationText = cleanText(article.find('a.right-h6').first().text());
-        const summary = cleanText(article.find('a.right-h4').first().text());
-
-        const base = compactRecord({
-            listingId,
-            title,
-            summary,
-            location: locationText,
-            url,
-            imageUrl: firstImageUrl(article),
-            tier: article.attr('data-gtm-listing_exposure_level') || article.attr('gtm-listing-exposure-level'),
-            resultPosition: article.attr('data-gtm-listing_position') || article.attr('gtm-listing-search-result-position-rank'),
-            resultPageRank: article.attr('gtm-listing-search-result-page-rank'),
-            city: article.attr('gtm-listing-city'),
-            state: article.attr('gtm-listing-state'),
-            country: article.attr('gtm-listing-country'),
-            postalCode: article.attr('gtm-listing-zip'),
-            listingStatus: article.attr('gtm-listing-status'),
-            listingStatusId: article.attr('gtm-listing-status-id'),
-            listingTypeName: article.attr('gtm-listing-type-name'),
-            listingTypeId: article.attr('gtm-listing-type-id'),
-            propertyType: article.attr('gtm-listing-property-type-name'),
-            propertyTypeId: article.attr('gtm-listing-property-type-id'),
-            propertyId: article.attr('gtm-listing-property-id'),
-            searchType: article.attr('gtm-listing-search-type'),
-            spaceUse: article.attr('gtm-listing-space-use'),
-            sourceSearchUrl: pageUrl,
-            searchPage: pageNo,
-        });
-
-        const key = base.listingId || base.url;
-        const fromLd = key ? ldMap.get(key) : undefined;
-        listings.push(compactRecord({ ...fromLd, ...base }));
-    });
-
-    if (listings.length > 0) return listings;
-
-    return [...ldMap.values()].map((item) => compactRecord({ ...item, searchPage: pageNo }));
-}
-
-function extractDetailData($, detailUrl) {
-    let primary = null;
-
-    $('script[type="application/ld+json"]').each((_, element) => {
-        if (primary) return;
-
-        const parsed = parseJsonSafe($(element).html() || '');
-        if (!parsed) return;
-
-        const stack = Array.isArray(parsed) ? [...parsed] : [parsed];
-        while (stack.length) {
-            const current = stack.shift();
-            if (!current || typeof current !== 'object') continue;
-
-            if (Array.isArray(current)) {
-                stack.push(...current);
-                continue;
-            }
-
-            if (current.mainEntity) stack.push(current.mainEntity);
-            if (current.itemListElement) stack.push(...current.itemListElement);
-            if (current.item) stack.push(current.item);
-
-            const type = normalizeType(current['@type'] || current.type).toLowerCase();
-            const url = normalizeUrl(current.url || current['@id'] || current.mainEntityOfPage?.['@id'] || detailUrl);
-
-            if (!url) continue;
-            if (!/\/listing\//i.test(url)) continue;
-            if (!type.includes('realestate') && !current.description) continue;
-
-            primary = current;
-            break;
-        }
-    });
-
-    const offers = Array.isArray(primary?.offers) ? primary.offers[0] : primary?.offers;
-    const address = primary?.address || primary?.spatialCoverage?.address;
-
-    return compactRecord({
-        detailUrl,
-        description: primary?.description,
-        addressLine: primary?.spatialCoverage?.name || primary?.address?.streetAddress,
-        city: address?.addressLocality,
-        state: address?.addressRegion,
-        postalCode: address?.postalCode,
-        latitude: primary?.geo?.latitude,
-        longitude: primary?.geo?.longitude,
-        floorSize: primary?.floorSize?.value,
-        floorSizeUnit: primary?.floorSize?.unitCode,
-        offerPrice: primary?.price || offers?.price,
-        priceCurrency: offers?.priceCurrency,
-        offerValidFrom: offers?.validFrom,
-        offerValidThrough: offers?.validThrough,
-        availability: normalizeAvailability(offers?.availability),
-    });
-}
-
-function baseSearchUrl({ propertySegment, location, listingType }) {
-    return `https://www.loopnet.com/search/${propertySegment}/${location}/${listingType}/`;
-}
-
-function withPage(url, pageNo) {
-    const normalized = sanitizeSearchUrl(url);
-    if (!normalized) return null;
-
-    const parsed = new URL(normalized);
-    const cleanPath = parsed.pathname.replace(/\/\d+\/?$/, '/');
-    parsed.pathname = pageNo > 1 ? `${cleanPath}${pageNo}/` : cleanPath;
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString();
-}
-
-function pageNoFromUrl(url) {
-    const normalized = sanitizeSearchUrl(url);
-    if (!normalized) return 1;
-    const parsed = new URL(normalized);
-    const match = parsed.pathname.match(/\/(\d+)\/?$/);
-    return match ? parsePositiveInt(match[1], 1) : 1;
-}
-
-function chooseNextPageUrl($, currentUrl, currentPageNo) {
-    const wanted = currentPageNo + 1;
-    const candidates = new Set();
-    const currentParsed = new URL(currentUrl);
-    const basePath = currentParsed.pathname.replace(/\/\d+\/?$/, '/');
-
-    $('a[href]').each((_, element) => {
-        const href = $(element).attr('href');
-        const absolute = sanitizeSearchUrl(href || '', currentUrl);
-        if (!absolute) return;
-
-        const absoluteParsed = new URL(absolute);
-        const absoluteBase = absoluteParsed.pathname.replace(/\/\d+\/?$/, '/');
-        if (absoluteBase !== basePath) return;
-
-        const pageNo = pageNoFromUrl(absolute);
-        if (pageNo === wanted) candidates.add(absolute);
-    });
-
-    if (candidates.size > 0) return [...candidates][0];
-    return withPage(currentUrl, wanted);
-}
-
-function proxyUrlToPlaywright(proxyUrl) {
-    if (!proxyUrl) return undefined;
-
-    const parsed = new URL(proxyUrl);
-    const server = `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}`;
-
-    return {
-        server,
-        username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
-        password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
-    };
-}
-
-async function createBrowserSession(proxyConfiguration) {
-    let proxy;
-    if (proxyConfiguration) {
-        const proxyUrl = await proxyConfiguration.newUrl();
-        proxy = proxyUrlToPlaywright(proxyUrl);
-    }
-
-    const browser = await firefox.launch({
-        headless: true,
-        proxy,
-    });
-
-    const context = await browser.newContext({
-        userAgent: USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
-        viewport: { width: 1366, height: 900 },
-        locale: 'en-US',
-    });
-
-    return { browser, context };
-}
-
-async function navigateWithWarmup(page, targetUrl) {
-    for (let attempt = 1; attempt <= 4; attempt++) {
-        if (attempt === 1) {
-            try {
-                await page.goto('https://www.loopnet.com/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-                await page.waitForTimeout(600);
-            } catch {
-                // Keep trying target navigation even if homepage warmup fails.
-            }
-        }
-
-        try {
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await page.waitForTimeout(900 + attempt * 200);
-
-            for (let probe = 0; probe < 6; probe++) {
-                const title = await page.title();
-                if (/access denied/i.test(title)) break;
-
-                let html = await page.content();
-                let hasListings = hasListingSignals(html);
-                if (hasListings) return true;
-
-                const isChallenge = hasChallengeSignals(html);
-                if (isChallenge) {
-                    await page.waitForTimeout(1400);
-                    try {
-                        await page.waitForLoadState('domcontentloaded', { timeout: 3000 });
-                    } catch {
-                        // Keep probing after challenge transitions.
-                    }
-                    continue;
-                }
-
-                try {
-                    await page.waitForSelector('article.placard, script[type="application/ld+json"]', { timeout: 2500 });
-                } catch {
-                    // Fall through to another probe cycle.
-                }
-
-                html = await page.content();
-                hasListings = hasListingSignals(html);
-                if (hasListings) return true;
-
-                await page.waitForTimeout(700);
-            }
-        } catch {
-            // Try again with another warmup pass.
-        }
-
-        await page.waitForTimeout(600 * attempt);
-    }
-
-    return false;
-}
-
-async function navigateFast(page, targetUrl) {
     try {
-        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        await page.waitForTimeout(900);
+        return new URL(value, LOOPNET_ORIGIN).toString();
+    } catch {
+        return undefined;
+    }
+}
 
-        let html = await page.content();
-        if (hasListingSignals(html)) return true;
-        if (hasChallengeSignals(html)) return false;
+function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean))];
+}
 
-        try {
-            await page.waitForSelector('article.placard, script[type="application/ld+json"]', { timeout: 2500 });
-        } catch {
-            // Keep fallback behavior if selectors don't appear quickly.
-        }
-
-        html = await page.content();
-        return hasListingSignals(html);
+function isListingImageUrl(value) {
+    if (!value) return false;
+    try {
+        const parsed = new URL(value);
+        return parsed.hostname === 'images1.loopnet.com';
     } catch {
         return false;
     }
 }
 
-async function fetchSearchPageViaHttp(currentUrl, currentPageNo, options = {}) {
-    const {
-        attempts = 2,
-        perAttemptTimeoutMs = 30000,
-        retryDelayBaseMs = 700,
-    } = options;
+function extractGalleryUrls($, article) {
+    const urls = [];
 
-    const targetUrl = withPage(currentUrl, currentPageNo) || currentUrl;
-    const normalizedTarget = sanitizeSearchUrl(targetUrl) || targetUrl;
+    article.find('img').each((_, image) => {
+        const img = $(image);
+        urls.push(
+            absoluteUrl(img.attr('src')),
+            absoluteUrl(img.attr('lazy-src')),
+            absoluteUrl(img.attr('data-src')),
+            absoluteUrl(img.attr('data-lazy-src')),
+        );
+    });
 
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-        try {
-            const response = await fetch(normalizedTarget, {
-                redirect: 'follow',
-                signal: AbortSignal.timeout(perAttemptTimeoutMs),
+    article.find('[style]').each((_, element) => {
+        const style = $(element).attr('style') || '';
+        for (const match of style.matchAll(/(?:background-image|background-lazy-image)\s*:\s*url\((['"]?)(.*?)\1\)/gi)) {
+            urls.push(absoluteUrl(match[2]));
+        }
+    });
+
+    return uniqueValues(urls).filter(isListingImageUrl);
+}
+
+function numericText(value) {
+    if (!value) return undefined;
+    const parsed = Number(String(value).replace(/[$,%\s,]/g, ''));
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parsePlacardEventModel(fragment) {
+    const match = fragment.match(/placard-event-model="([^"]+)"/);
+    if (!match) return new Map();
+
+    try {
+        const model = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
+        const coordinates = new Map();
+        for (const item of model.ListingSearchResultItems || []) {
+            if (item?.ListingID) {
+                coordinates.set(String(item.ListingID), {
+                    latitude: item.Latitude,
+                    longitude: item.Longitude,
+                });
+            }
+        }
+        return coordinates;
+    } catch {
+        return new Map();
+    }
+}
+
+function parseMapCoordinates(mapHtml) {
+    const coordinates = new Map();
+    if (!mapHtml) return coordinates;
+
+    const $ = cheerioLoad(mapHtml);
+    $('div[map-pin][id]').each((_, el) => {
+        const pin = $(el);
+        const latitude = numericText(pin.attr('lat'));
+        const longitude = numericText(pin.attr('lon'));
+        const ids = [pin.attr('id'), ...(pin.attr('listingids') || '').split(',')]
+            .map((value) => value?.trim())
+            .filter(Boolean);
+
+        for (const id of ids) {
+            if (latitude !== undefined && longitude !== undefined) coordinates.set(id, { latitude, longitude });
+        }
+    });
+
+    return coordinates;
+}
+
+function getPlacardFragments(searchPlacards) {
+    if (Array.isArray(searchPlacards)) return searchPlacards;
+    if (typeof searchPlacards === 'string') return [searchPlacards];
+    if (typeof searchPlacards?.Html === 'string') return [searchPlacards.Html];
+    return Object.values(searchPlacards || {}).filter((value) => typeof value === 'string');
+}
+
+function extractListingsFromApiPlacards(searchData, sourceSearchUrl, searchPage) {
+    const placardFragments = getPlacardFragments(searchData.SearchPlacards);
+    const html = placardFragments.join('\n');
+    const $ = cheerioLoad(html);
+    const coordinateMap = new Map([...parseMapCoordinates(searchData.Map?.HTML), ...parsePlacardEventModel(html)]);
+    const records = [];
+    const seenUrls = new Set();
+
+    $('article[data-gtm-listing_id], article[gtm-listing-id]').each((_, el) => {
+        const article = $(el);
+        const attrs = el.attribs || {};
+        const listingId = attrs['data-gtm-listing_id'] || attrs['gtm-listing-id'] || attrs['data-id'];
+        if (!listingId) return;
+
+        const href = article
+            .find('a[href*="/Listing/"], a[href*="/listing/"], a[ng-href*="/Listing/"], a[ng-href*="/listing/"]')
+            .first()
+            .attr('href');
+        const url = absoluteUrl(href || article.find('a[ng-href]').first().attr('ng-href'));
+        if (!url || seenUrls.has(url)) return;
+        seenUrls.add(url);
+
+        const titleEl = article.find('header .left-h6, a.left-h6').first();
+        const addressEl = article.find('header .left-h4, a.left-h4').first();
+        const rightH4 = article.find('header .right-h4, .right-h4').first();
+        const rightH6 = article.find('header .right-h6, .right-h6').first();
+        const galleryUrls = extractGalleryUrls($, article);
+        const allText = article.text().replace(/\s+/g, ' ').trim();
+        const linkTitle = article.find('a[title*="More details for"]').first().attr('title');
+        const fallbackTitle = linkTitle?.replace(/^More details for\s+/i, '').replace(/\s+-\s+[^-]+$/, '');
+        const sqftMatch = allText.match(/([0-9,]+)\s+SF/i);
+        const priceMatch = allText.match(/[$€£]\s*([0-9,]+(?:\.[0-9]+)?)/);
+        const rightH6Text = rightH6.text().replace(/\s+/g, ' ').trim();
+        const locParts = rightH6Text.split(',').map((item) => item.trim());
+        const coordinates = coordinateMap.get(String(listingId)) || {};
+
+        records.push(
+            compactRecord({
+                listingId,
+                title: titleEl.text().replace(/\s+/g, ' ').trim() || fallbackTitle,
+                url,
+                addressLine: addressEl.text().replace(/\s+/g, ' ').trim(),
+                city: attrs['gtm-listing-city'] || (locParts.length > 0 ? locParts[0] : undefined),
+                state: attrs['gtm-listing-state'] || (locParts.length > 1 ? locParts[1].split(/\s+/)[0] : undefined),
+                postalCode: attrs['gtm-listing-zip'] || (locParts.length > 1 ? locParts[1].split(/\s+/)[1] : undefined),
+                country: attrs['gtm-listing-country'],
+                county: attrs['gtm-listing-county'],
+                latitude: coordinates.latitude,
+                longitude: coordinates.longitude,
+                propertyType: attrs['gtm-listing-property-type-name'],
+                propertyTypeId: attrs['gtm-listing-property-type-id'],
+                propertyId: attrs['gtm-listing-property-id'],
+                listingType: attrs['gtm-listing-search-type'] === 'FL' ? 'for-lease' : 'for-sale',
+                listingTypeName: attrs['gtm-listing-type-name'],
+                listingTypeId: attrs['gtm-listing-type-id'],
+                exposureLevel: attrs['gtm-listing-exposure-level'] || attrs['data-gtm-listing_exposure_level'],
+                listingStatus: attrs['gtm-listing-status'],
+                listingStatusId: attrs['gtm-listing-status-id'],
+                searchMarketId: attrs['gtm-listing-search-market-id'],
+                resultPageRank: numericText(attrs['gtm-listing-search-result-page-rank']),
+                resultPositionRank: numericText(attrs['gtm-listing-search-result-position-rank']),
+                squareFeet: attrs['gtm-listing-sqft'] || (sqftMatch ? sqftMatch[1].replace(/,/g, '') : undefined),
+                sizeText: rightH4.text().replace(/\s+/g, ' ').trim(),
+                offeringPrice: attrs['gtm-listing-price'] || (priceMatch ? priceMatch[0] : undefined),
+                capRate: numericText(attrs['gtm-listing-cap-rate']),
+                yearBuilt: numericText(attrs['gtm-listing-year-built']),
+                buildingClass: attrs['gtm-listing-bldg-class'],
+                brokerName: attrs['gtm-listing-broker'],
+                imageUrl: galleryUrls[0],
+                galleryUrls,
+                buyNowEnabled: attrs['gtm-buy-now-enabled'],
+                sourceSearchUrl,
+                searchPage,
+                collectedAt: new Date().toISOString(),
+            }),
+        );
+    });
+
+    return records;
+}
+
+async function fetchSearchData(page, criteria, csrfToken, searchPage) {
+    return page.evaluate(
+        async ({ criteriaForPage, csrfTokenForPage }) => {
+            const response = await fetch('/services/search', {
+                method: 'POST',
                 headers: {
-                    'user-agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
-                    'accept-language': 'en-US,en;q=0.9',
-                    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'cache-control': 'no-cache',
+                    accept: 'application/json, text/plain, */*',
+                    'content-type': 'application/json;charset=UTF-8',
+                    RequestVerificationToken: csrfTokenForPage,
+                    'x-page-loopnetarea': 'SRP-Client',
                 },
+                body: JSON.stringify({
+                    pageguid: `loopnet-api-${Date.now()}`,
+                    criteria: criteriaForPage,
+                    savedsearcheditmode: false,
+                }),
             });
 
-            if (!response.ok) {
-                await sleep(retryDelayBaseMs * attempt);
+            const text = await response.text();
+            let json = null;
+            try {
+                json = JSON.parse(text);
+            } catch {
+                return {
+                    ok: false,
+                    status: response.status,
+                    contentType: response.headers.get('content-type'),
+                    errorPreview: text.slice(0, 300),
+                };
+            }
+
+            return {
+                ok: response.ok,
+                status: response.status,
+                contentType: response.headers.get('content-type'),
+                json,
+            };
+        },
+        {
+            criteriaForPage: {
+                ...criteria,
+                PageNumber: searchPage,
+            },
+            csrfTokenForPage: csrfToken,
+        },
+    );
+}
+
+async function bootstrapSearchSession(page, startUrl) {
+    await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    await page.waitForTimeout(8000);
+
+    return page.evaluate(() => {
+        const html = [
+            document.documentElement.outerHTML,
+            ...Array.from(document.scripts, (script) => script.textContent || ''),
+        ].join('\n');
+        const csrfToken = html.match(/csrfTokenValue:'([^']+)'/)?.[1] || null;
+        const marker = 'viewdata.set(';
+        const markerIndex = html.indexOf(marker);
+        if (markerIndex < 0) {
+            return {
+                ok: false,
+                title: document.title,
+                htmlLength: html.length,
+                reason: 'Missing LoopNet viewdata bootstrap payload.',
+            };
+        }
+
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        let endIndex = -1;
+        for (let index = markerIndex + marker.length; index < html.length; index++) {
+            const char = html[index];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (char === '\\') escaped = true;
+                else if (char === '"') inString = false;
                 continue;
             }
 
-            const html = await response.text();
-            const pageUrl = sanitizeSearchUrl(response.url || normalizedTarget) || normalizedTarget;
-            const $ = cheerioLoad(html);
-            const listings = extractPlacardListings($, pageUrl, currentPageNo);
-            const nextUrl = chooseNextPageUrl($, pageUrl, currentPageNo);
-
-            if (listings.length > 0 || !hasChallengeSignals(html)) {
-                return { listings, pageUrl, nextUrl };
+            if (char === '"') {
+                inString = true;
+            } else if (char === '{') {
+                depth++;
+            } else if (char === '}') {
+                depth--;
+                if (depth === 0) {
+                    endIndex = index + 1;
+                    break;
+                }
             }
-        } catch {
-            // Retry HTTP fallback fetch.
         }
 
-        await sleep(retryDelayBaseMs * attempt);
-    }
+        if (!csrfToken || endIndex < 0) {
+            return {
+                ok: false,
+                title: document.title,
+                htmlLength: html.length,
+                reason: 'Missing CSRF token or incomplete viewdata payload.',
+            };
+        }
 
-    return null;
+        try {
+            const viewData = JSON.parse(html.slice(markerIndex + marker.length, endIndex));
+            return {
+                ok: true,
+                csrfToken,
+                criteria: viewData.criteria,
+                totalResultCount: viewData.totalResultCount,
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                title: document.title,
+                htmlLength: html.length,
+                reason: `Could not parse viewdata payload: ${error.message}`,
+            };
+        }
+    });
 }
 
-function shouldCollectMore(collectedCount, resultsWanted) {
-    return collectedCount < resultsWanted;
+function extractBootstrapFromHtml(html) {
+    const csrfToken = html.match(/csrfTokenValue:'([^']+)'/)?.[1] || null;
+    const marker = 'viewdata.set(';
+    const markerIndex = html.indexOf(marker);
+    if (markerIndex < 0) {
+        return {
+            ok: false,
+            htmlLength: html.length,
+            reason: 'Missing LoopNet viewdata bootstrap payload.',
+        };
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let endIndex = -1;
+    for (let index = markerIndex + marker.length; index < html.length; index++) {
+        const char = html[index];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (char === '\\') escaped = true;
+            else if (char === '"') inString = false;
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+        } else if (char === '{') {
+            depth++;
+        } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+                endIndex = index + 1;
+                break;
+            }
+        }
+    }
+
+    if (!csrfToken || endIndex < 0) {
+        return {
+            ok: false,
+            htmlLength: html.length,
+            reason: 'Missing CSRF token or incomplete viewdata payload.',
+        };
+    }
+
+    try {
+        const viewData = JSON.parse(html.slice(markerIndex + marker.length, endIndex));
+        return {
+            ok: true,
+            csrfToken,
+            criteria: viewData.criteria,
+            totalResultCount: viewData.totalResultCount,
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            htmlLength: html.length,
+            reason: `Could not parse viewdata payload: ${error.message}`,
+        };
+    }
+}
+
+async function bootstrapSearchViaHttp(startUrl) {
+    const response = await fetch(startUrl, {
+        headers: {
+            'user-agent': MOBILE_USER_AGENT,
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+        },
+    });
+    const html = await response.text();
+    return {
+        ...extractBootstrapFromHtml(html),
+        status: response.status,
+        source: 'mobile-http-bootstrap',
+    };
+}
+
+async function runApiExtraction(startUrl, proxyUrl, resultsWanted, maxPages, savedCount, seenListings) {
+    const userDataDir = join(process.cwd(), 'storage', 'browser-sessions', `loopnet-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}`);
+    const browserContext = await chromium.launchPersistentContext(userDataDir, {
+        channel: 'chrome',
+        headless: false,
+        noViewport: true,
+        proxy: proxyUrl ? { server: proxyUrl } : undefined,
+        args: [
+            '--no-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-infobars',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-dev-shm-usage',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-component-extensions-with-background-pages',
+            '--mute-audio',
+        ],
+        ignoreDefaultArgs: ['--enable-automation'],
+    });
+
+    const page = await browserContext.newPage();
+    await page.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        const url = route.request().url();
+        if (
+            ['image', 'font', 'media', 'stylesheet'].includes(type) ||
+            /google-analytics|googletagmanager|doubleclick|facebook\.net|criteo|mpulse|analytics/i.test(url)
+        ) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+
+    let totalSaved = savedCount;
+
+    try {
+        let bootstrap = await bootstrapSearchSession(page, startUrl);
+        if (!bootstrap.ok || !bootstrap.criteria) {
+            log.warning('Browser bootstrap did not expose API criteria; trying mobile HTTP bootstrap', bootstrap);
+            bootstrap = await bootstrapSearchViaHttp(startUrl);
+        }
+
+        if (!bootstrap.ok || !bootstrap.criteria) {
+            log.warning('Could not bootstrap LoopNet API session', bootstrap);
+            return totalSaved;
+        }
+
+        let consecutiveEmptyPages = 0;
+        for (let searchPage = 1; totalSaved < resultsWanted && searchPage <= maxPages; searchPage++) {
+            log.info(`Fetching API page ${searchPage}/${maxPages}`);
+            const response = await fetchSearchData(page, bootstrap.criteria, bootstrap.csrfToken, searchPage);
+            if (!response.ok || !response.json) {
+                log.warning('API request failed', {
+                    searchPage,
+                    status: response.status,
+                    contentType: response.contentType,
+                    preview: response.errorPreview,
+                });
+                break;
+            }
+
+            const listings = extractListingsFromApiPlacards(response.json, startUrl, searchPage);
+            const batch = [];
+            let duplicateCount = 0;
+
+            for (const listing of listings) {
+                if (totalSaved >= resultsWanted) break;
+
+                const dedupKey = listing.listingId || listing.url;
+                if (!dedupKey || seenListings.has(dedupKey)) {
+                    duplicateCount++;
+                    continue;
+                }
+
+                seenListings.add(dedupKey);
+                batch.push(listing);
+                totalSaved++;
+            }
+
+            if (batch.length > 0) {
+                await Actor.pushData(batch);
+                log.info(`Saved ${batch.length} API records. Total: ${totalSaved}/${resultsWanted}`, {
+                    searchPage,
+                    duplicatesSkipped: duplicateCount,
+                });
+                consecutiveEmptyPages = 0;
+            } else {
+                consecutiveEmptyPages++;
+                log.warning('API page produced no new records', { searchPage, duplicatesSkipped: duplicateCount });
+                if (consecutiveEmptyPages >= 2) break;
+            }
+
+            const totalAvailable = response.json.MetaState?.TotalResultCount;
+            if (totalAvailable && totalSaved >= totalAvailable) break;
+        }
+
+        return totalSaved;
+    } catch (err) {
+        log.exception(err, 'API extraction error');
+        return totalSaved;
+    } finally {
+        await page.close();
+        await browserContext.close();
+        await rm(userDataDir, { recursive: true, force: true });
+    }
 }
 
 async function main() {
     const actorInput = (await Actor.getInput()) || {};
-    let inputDefaults = {};
 
-    try {
-        const localInputRaw = await readFile(new URL('../INPUT.json', import.meta.url), 'utf8');
-        const localInput = JSON.parse(localInputRaw);
-        if (localInput && typeof localInput === 'object') {
-            inputDefaults = localInput;
-            if (Object.keys(actorInput).length > 0) {
-                log.info('Loaded INPUT.json fallback defaults (runtime Actor input has priority)');
-            } else {
-                log.info('Loaded INPUT.json fallback defaults (no runtime Actor input provided)');
-            }
-        }
-    } catch {
-        // INPUT.json fallback is optional.
-    }
-
-    const resolveInput = (key, hardFallback) => valueOrFallback(actorInput[key], valueOrFallback(inputDefaults[key], hardFallback));
-
-    const startUrl = resolveInput('startUrl');
-    const startUrls = resolveInput('startUrls');
-    const url = resolveInput('url');
-    const location = resolveInput('location', 'new-york-ny');
-    const requestedListingType = resolveInput('listingType', 'for-sale');
-    const propertySegment = resolveInput('propertySegment', 'commercial-real-estate');
-    const results_wanted = resolveInput('results_wanted', 20);
-    const max_pages = resolveInput('max_pages', 10);
-    const proxyInput = resolveInput('proxyConfiguration');
-
-    // Internal-only controls removed from input schema.
-    const collectDetails = parseBoolean(valueOrFallback(inputDefaults.collectDetails, false), false);
-    const internalMaxConcurrency = parsePositiveInt(inputDefaults.maxConcurrency, 4);
-
-    const resultsWanted = parsePositiveInt(results_wanted, 20);
-    const maxPages = parsePositiveInt(max_pages, 10);
-    const concurrency = Math.min(8, internalMaxConcurrency);
+    const startUrl = valueOrFallback(actorInput.startUrl);
+    const location = valueOrFallback(actorInput.location, 'new-york-ny');
+    const requestedListingType = valueOrFallback(actorInput.listingType, 'for-sale');
+    const propertySegment = valueOrFallback(actorInput.propertySegment, 'commercial-real-estate');
+    const resultsWanted = parsePositiveInt(valueOrFallback(actorInput.results_wanted, 20), 20);
+    const maxPages = parsePositiveInt(valueOrFallback(actorInput.max_pages, 3), 3);
+    const proxyInput = valueOrFallback(actorInput.proxyConfiguration);
 
     const rawStartUrls = [];
-    if (Array.isArray(startUrls)) rawStartUrls.push(...startUrls.filter(Boolean));
     if (typeof startUrl === 'string' && startUrl) rawStartUrls.push(startUrl);
-    if (typeof url === 'string' && url) rawStartUrls.push(url);
 
-    const listingTypeFromProvidedUrl = rawStartUrls.map((value) => listingTypeFromUrl(value)).find(Boolean);
-    const effectiveListingType = listingTypeFromProvidedUrl || requestedListingType || 'for-sale';
+    const effectiveListingType =
+        rawStartUrls.map((value) => listingTypeFromUrl(value)).find(Boolean) || requestedListingType || 'for-sale';
 
     if (rawStartUrls.length === 0) {
         rawStartUrls.push(baseSearchUrl({ propertySegment, location, listingType: effectiveListingType }));
     }
-
-    const startInputSource = Array.isArray(actorInput.startUrls) || actorInput.startUrl || actorInput.url
-        ? 'actorInput'
-        : Array.isArray(inputDefaults.startUrls) || inputDefaults.startUrl || inputDefaults.url
-          ? 'INPUT.json fallback'
-          : 'generated default';
 
     const preparedStarts = [...new Set(rawStartUrls.map((value) => sanitizeSearchUrl(value)).filter(Boolean))];
     if (preparedStarts.length === 0) throw new Error('Unable to build a valid LoopNet start URL from input.');
@@ -608,186 +601,44 @@ async function main() {
     let proxyConfiguration;
     if (proxyInput) {
         const hasCustomProxyUrls = Array.isArray(proxyInput.proxyUrls) && proxyInput.proxyUrls.length > 0;
-        const hasApifyProxyCredentials = Boolean(process.env.APIFY_TOKEN || process.env.APIFY_PROXY_PASSWORD);
         const requestsApifyProxy = proxyInput.useApifyProxy !== false && !hasCustomProxyUrls;
-
-        if (hasCustomProxyUrls || !requestsApifyProxy || hasApifyProxyCredentials) {
-            proxyConfiguration = await Actor.createProxyConfiguration(proxyInput);
-        } else {
-            log.warning('Apify Proxy requested but no local credentials were found. Continuing without proxy.');
+        if (hasCustomProxyUrls || requestsApifyProxy) {
+            proxyConfiguration = await Actor.createProxyConfiguration({
+                useApifyProxy: true,
+                apifyProxyGroups: ['RESIDENTIAL'],
+                ...proxyInput,
+            });
         }
+    } else if (process.env.APIFY_TOKEN || process.env.APIFY_PROXY_PASSWORD) {
+        proxyConfiguration = await Actor.createProxyConfiguration({
+            useApifyProxy: true,
+            apifyProxyGroups: ['RESIDENTIAL'],
+        });
+        log.info('Defaulting to Apify RESIDENTIAL proxy');
     }
 
-    const seenListings = new Set();
-    const detailQueue = [];
-    let collectedCount = 0;
-    let savedCount = 0;
-
-    log.info('Starting LoopNet scraper', {
+    log.info('Starting LoopNet API scraper', {
         starts: preparedStarts,
-        startInputSource,
         listingTypeUsed: effectiveListingType,
-        collectDetails,
         resultsWanted,
         maxPages,
-        concurrency,
     });
 
-    const { browser, context } = await createBrowserSession(proxyConfiguration);
-    const searchPage = await context.newPage();
-    const detailPage = collectDetails ? await context.newPage() : null;
+    const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl() : undefined;
+    const seenListings = new Set();
+    let totalSaved = 0;
 
-    await searchPage.route('**/*', (route) => {
-        const urlToCheck = route.request().url();
-        if (BLOCKED_HOST_PATTERNS.some((pattern) => pattern.test(urlToCheck))) {
-            return route.abort();
-        }
-        return route.continue();
-    });
-
-    if (detailPage) {
-        await detailPage.route('**/*', (route) => {
-            const urlToCheck = route.request().url();
-            if (BLOCKED_HOST_PATTERNS.some((pattern) => pattern.test(urlToCheck))) {
-                return route.abort();
-            }
-            return route.continue();
-        });
+    for (const start of preparedStarts) {
+        if (totalSaved >= resultsWanted) break;
+        totalSaved = await runApiExtraction(start, proxyUrl, resultsWanted, maxPages, totalSaved, seenListings);
     }
 
-    try {
-        for (const start of preparedStarts) {
-            let currentUrl = withPage(start, pageNoFromUrl(start)) || start;
-            let currentPageNo = pageNoFromUrl(currentUrl);
-
-            while (currentPageNo <= maxPages && shouldCollectMore(collectedCount, resultsWanted)) {
-                const pageStartedAt = Date.now();
-                let searchPageUrl = currentUrl;
-                let listings = [];
-                let nextUrl;
-                let fetchMode = 'browser_fast';
-                let accessible = await navigateFast(searchPage, currentUrl);
-
-                if (!accessible) {
-                    fetchMode = 'browser_warmup';
-                    accessible = await navigateWithWarmup(searchPage, currentUrl);
-                }
-
-                if (accessible) {
-                    const html = await searchPage.content();
-                    const $ = cheerioLoad(html);
-                    searchPageUrl = sanitizeSearchUrl(searchPage.url() || currentUrl) || currentUrl;
-                    listings = extractPlacardListings($, searchPageUrl, currentPageNo);
-                    nextUrl = chooseNextPageUrl($, searchPageUrl, currentPageNo);
-                } else {
-                    log.warning('Search page blocked after retries', { currentUrl, pageNo: currentPageNo });
-                    fetchMode = 'http_fallback';
-                    const httpFallback = await fetchSearchPageViaHttp(currentUrl, currentPageNo, {
-                        attempts: 3,
-                        perAttemptTimeoutMs: 30000,
-                        retryDelayBaseMs: 900,
-                    });
-
-                    if (!httpFallback) break;
-
-                    searchPageUrl = httpFallback.pageUrl;
-                    listings = httpFallback.listings;
-                    nextUrl = httpFallback.nextUrl;
-
-                    log.warning('Recovered search page via HTTP fallback', {
-                        url: searchPageUrl,
-                        pageNo: currentPageNo,
-                        listingsFound: listings.length,
-                    });
-                }
-
-                const pageOutput = [];
-
-                log.info('Search page processed', {
-                    url: searchPageUrl,
-                    pageNo: currentPageNo,
-                    listingsFound: listings.length,
-                    fetchMode,
-                    pageMs: Date.now() - pageStartedAt,
-                });
-
-                for (const listing of listings) {
-                    if (!shouldCollectMore(collectedCount, resultsWanted)) break;
-
-                    const key = listing.listingId || listing.url;
-                    if (!key || seenListings.has(key)) continue;
-                    seenListings.add(key);
-
-                    const baseRecord = compactRecord({
-                        ...listing,
-                        sourceSearchUrl: searchPageUrl,
-                        searchPage: currentPageNo,
-                    });
-
-                    if (collectDetails) {
-                        detailQueue.push(baseRecord);
-                    } else {
-                        pageOutput.push(compactRecord({ ...baseRecord, collectedAt: new Date().toISOString() }));
-                    }
-
-                    collectedCount += 1;
-                }
-
-                if (pageOutput.length > 0) {
-                    await Actor.pushData(pageOutput);
-                    savedCount += pageOutput.length;
-                }
-
-                if (!shouldCollectMore(collectedCount, resultsWanted)) break;
-                if (!nextUrl || nextUrl === currentUrl) break;
-
-                currentUrl = nextUrl;
-                currentPageNo += 1;
-            }
-
-            if (!shouldCollectMore(collectedCount, resultsWanted)) break;
-        }
-
-        if (collectDetails) {
-            for (const listing of detailQueue.slice(0, resultsWanted)) {
-                let outputRecord = compactRecord({ ...listing, collectedAt: new Date().toISOString() });
-
-                if (detailPage && listing.url) {
-                    const accessible = await navigateWithWarmup(detailPage, listing.url);
-                    if (!accessible) {
-                        log.warning('Detail page blocked after retries', { url: listing.url });
-                    } else {
-                        const detailHtml = await detailPage.content();
-                        const detail$ = cheerioLoad(detailHtml);
-                        outputRecord = compactRecord({
-                            ...listing,
-                            ...extractDetailData(detail$, detailPage.url() || listing.url),
-                            collectedAt: new Date().toISOString(),
-                        });
-                    }
-                }
-
-                await Actor.pushData(outputRecord);
-                savedCount += 1;
-            }
-        }
-
-        log.info('LoopNet scrape complete', {
-            savedCount,
-            resultsWanted,
-            collectDetails,
-        });
-    } finally {
-        await context.close();
-        await browser.close();
-    }
+    log.info('LoopNet API scrape complete', { savedCount: totalSaved, resultsWanted });
 }
 
 main()
     .catch((error) => {
-        log.exception(error, 'Actor failed');
+        log.exception(error, 'Unhandled error');
         process.exitCode = 1;
     })
-    .finally(async () => {
-        await Actor.exit();
-    });
+    .finally(() => Actor.exit());
