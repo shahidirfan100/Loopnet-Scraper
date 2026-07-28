@@ -1,102 +1,99 @@
-# LoopNet Commercial Real Estate Scraper
+## What does LoopNet Commercial Real Estate Scraper do?
 
-Extract commercial real estate listings from LoopNet search pages in a structured dataset. Collect property details, location data, listing metadata, images, pricing signals, and ranking information for market research, lead discovery, investment analysis, and listing monitoring.
+LoopNet Commercial Real Estate Scraper collects structured property listing data from LoopNet search result pages. Enter a LoopNet search URL or let the scraper build one from a location and listing type, and it returns property details, location data, pricing signals, images, and listing metadata in a clean dataset for market research, investment analysis, and lead discovery.
 
-## Features
+## Why use LoopNet Commercial Real Estate Scraper?
 
-- **Flexible Search Inputs** - Start from a LoopNet search URL or build one from a location slug and listing type.
-- **Sale And Lease Support** - Collect commercial properties listed for sale or for lease.
-- **Richer Listing Metadata** - Capture IDs, property types, location fields, coordinates, image URLs, status fields, exposure level, and search ranking details.
-- **Duplicate-Free Results** - Skip repeated records across pages and multiple start URLs.
-- **Clean Dataset Output** - Remove empty fields so exported JSON, CSV, and Excel files stay readable.
-- **Pagination Control** - Limit pages and result count for quick tests or larger collection runs.
+- **Reliable dataset creation** - Collect structured commercial real estate listings without manual copy-paste from search result pages.
+- **Automation-ready output** - Export results to JSON, CSV, Excel, or XML for analysis in spreadsheets, BI tools, or data pipelines.
+- **Use-case fit** - Supports investment research, brokerage lead generation, market monitoring, and property portfolio analysis workflows.
+- **Sale and lease coverage** - Collect listings for both for-sale and for-lease properties across any supported LoopNet market.
 
----
+## What data can you extract from LoopNet?
 
-## Use Cases
+| Field | Description |
+|-------|-------------|
+| `title` | Listing headline |
+| `url` | Direct LoopNet listing detail page URL |
+| `addressLine` | Street address or displayed address |
+| `city`, `state`, `postalCode`, `country` | Location details |
+| `latitude`, `longitude` | Listing coordinates |
+| `propertyType` | Property category such as Retail, Office, or Industrial |
+| `listingType` | Sale or lease listing type |
+| `squareFeet` | Square footage when available |
+| `offeringPrice` | Displayed price when available |
+| `capRate` | Capitalization rate when available |
+| `yearBuilt` | Year built when available |
+| `buildingClass` | Building class when available |
+| `brokerName` | Broker name when available |
+| `imageUrl`, `galleryUrls` | Primary and gallery listing images |
+| `listingStatus` | Listing status text |
 
-### Investment Research
+## How to use LoopNet Commercial Real Estate Scraper
 
-Build a list of available commercial properties in a target market. Compare asset type, size, price signals, location, and listing rank to identify opportunities worth deeper review.
-
-### Brokerage Lead Discovery
-
-Collect structured listing data for broker research, outreach planning, and CRM enrichment. Listing URLs, property IDs, addresses, and market fields make it easier to match records with internal workflows.
-
-### Market Monitoring
-
-Schedule recurring runs for the same LoopNet search and compare new results over time. This is useful for watching supply changes in a city, asset class, or transaction type.
-
-### Portfolio And Location Analysis
-
-Use latitude, longitude, city, state, postal code, and property type fields to analyze where listings cluster. Export the dataset into BI tools or spreadsheets for mapping and filtering.
-
----
+1. Open the Actor on Apify Store.
+2. Provide a LoopNet search URL or configure the location and listing type.
+3. Set the maximum number of listings and pages to process.
+4. Optionally enable proxy configuration for scheduled or repeated runs.
+5. Run the Actor.
+6. Download the dataset or connect it to your workflow.
 
 ## Input Parameters
 
 | Parameter | Type | Required | Default | Description |
-|---|---|---:|---|---|
-| `startUrl` | String | No | LoopNet New York sale search | LoopNet search page URL to collect from. |
-| `location` | String | No | `new-york-ny` | Location slug used when `startUrl` is not provided. |
-| `propertySegment` | String | No | `commercial-real-estate` | Search category path segment. |
-| `listingType` | String | No | `for-sale` | Listing type: `for-sale` or `for-lease`. |
-| `results_wanted` | Integer | No | `20` | Maximum number of records to save. |
-| `max_pages` | Integer | No | `3` | Maximum search result pages to process. |
-| `proxyConfiguration` | Object | No | Disabled | Proxy settings for more reliable collection. |
-
----
+|-----------|------|----------|---------|-------------|
+| `startUrl` | String | No | LoopNet New York sale search | Full LoopNet search page URL to start from. Query and hash parts are ignored automatically. |
+| `listingType` | String | No | `for-sale` | Fallback transaction type used only when the URL does not already include it. Options: `for-sale`, `for-lease`. |
+| `results_wanted` | Integer | No | `20` | Maximum number of listing records to save in the dataset. |
+| `max_pages` | Integer | No | `10` | Safety cap on paginated search result pages to process. |
+| `proxyConfiguration` | Object | No | Disabled | Proxy settings for more reliable collection during repeated or scheduled runs. |
 
 ## Output Data
 
-Each dataset item can include:
-
 | Field | Type | Description |
-|---|---|---|
-| `listingId` | String | LoopNet listing identifier. |
-| `title` | String | Listing headline. |
-| `url` | String | Listing detail page URL. |
-| `addressLine` | String | Street address or displayed address. |
-| `city` | String | City name. |
-| `state` | String | State abbreviation. |
-| `postalCode` | String | ZIP or postal code. |
-| `country` | String | Country code. |
-| `county` | String | County when available. |
-| `latitude` | Number | Listing latitude. |
-| `longitude` | Number | Listing longitude. |
-| `propertyType` | String | Property category such as Retail, Office, or Industrial. |
-| `propertyTypeId` | String | Property category identifier. |
-| `propertyId` | String | LoopNet property identifier. |
-| `listingType` | String | Sale or lease listing type. |
-| `listingTypeName` | String | Source listing type label. |
-| `listingTypeId` | String | Source listing type identifier. |
-| `exposureLevel` | String | Listing exposure level. |
-| `listingStatus` | String | Listing status text when available. |
-| `listingStatusId` | String | Listing status identifier. |
-| `searchMarketId` | String | Market identifier from the search result. |
-| `resultPageRank` | Number | Rank within the current result page. |
-| `resultPositionRank` | Number | Position rank within the search result. |
-| `squareFeet` | String | Square footage when available. |
-| `sizeText` | String | Displayed size summary. |
-| `offeringPrice` | String | Displayed price when available. |
-| `capRate` | Number | Capitalization rate when available. |
-| `yearBuilt` | Number | Year built when available. |
-| `buildingClass` | String | Building class when available. |
-| `brokerName` | String | Broker name when available. |
-| `imageUrl` | String | Primary listing image URL. |
-| `galleryUrls` | Array | Listing gallery image URLs found in the search result payload. |
-| `buyNowEnabled` | String | Buy-now availability flag when present. |
-| `sourceSearchUrl` | String | Search URL used for the record. |
-| `searchPage` | Number | Search result page number. |
-| `collectedAt` | String | Collection timestamp in ISO format. |
-
----
+|-------|------|-------------|
+| `listingId` | String | LoopNet listing identifier |
+| `title` | String | Listing headline |
+| `url` | String | Direct listing detail page URL |
+| `addressLine` | String | Street address or displayed address |
+| `city` | String | City name |
+| `state` | String | State abbreviation |
+| `postalCode` | String | ZIP or postal code |
+| `country` | String | Country code |
+| `county` | String | County when available |
+| `latitude` | Number | Listing latitude |
+| `longitude` | Number | Listing longitude |
+| `propertyType` | String | Property category such as Retail, Office, or Industrial |
+| `propertyTypeId` | String | Property category identifier |
+| `propertyId` | String | LoopNet property identifier |
+| `listingType` | String | Sale or lease listing type |
+| `listingTypeName` | String | Source listing type label |
+| `listingTypeId` | String | Source listing type identifier |
+| `exposureLevel` | String | Listing exposure level |
+| `listingStatus` | String | Listing status text when available |
+| `listingStatusId` | String | Listing status identifier |
+| `searchMarketId` | String | Market identifier from the search result |
+| `resultPageRank` | Number | Rank within the current result page |
+| `resultPositionRank` | Number | Position rank within the search result |
+| `squareFeet` | String | Square footage when available |
+| `sizeText` | String | Displayed size summary |
+| `offeringPrice` | String | Displayed price when available |
+| `capRate` | Number | Capitalization rate when available |
+| `yearBuilt` | Number | Year built when available |
+| `buildingClass` | String | Building class when available |
+| `brokerName` | String | Broker name when available |
+| `imageUrl` | String | Primary listing image URL |
+| `galleryUrls` | Array | Listing gallery image URLs from the search result payload |
+| `buyNowEnabled` | String | Buy-now availability flag when present |
+| `sourceSearchUrl` | String | Search URL used for the record |
+| `searchPage` | Number | Search result page number |
+| `collectedAt` | String | Collection timestamp in ISO format |
 
 ## Usage Examples
 
-### Basic Search URL
+### Basic Sale Search
 
-Collect 20 sale listings from a New York search:
+Collect 20 for-sale listings from the New York commercial real estate search:
 
 ```json
 {
@@ -106,9 +103,9 @@ Collect 20 sale listings from a New York search:
 }
 ```
 
-### Lease Listings By Location
+### Lease Listings in Chicago
 
-Build the search from a city slug:
+Collect lease listings without providing a full URL -- the scraper builds the search from the location slug and listing type:
 
 ```json
 {
@@ -119,9 +116,9 @@ Build the search from a city slug:
 }
 ```
 
-### Larger Market Run
+### Larger Collection with Proxy
 
-Collect more records with proxy support:
+Run a larger collection for Los Angeles with residential proxies for better reliability:
 
 ```json
 {
@@ -135,7 +132,9 @@ Collect more records with proxy support:
 }
 ```
 
----
+### Multi-URL Collection
+
+The Actor also accepts multiple start URLs programmatically through the Apify API for collecting from multiple markets in one run.
 
 ## Sample Output
 
@@ -172,38 +171,20 @@ Collect more records with proxy support:
 }
 ```
 
----
+## Tips for Best Results
 
-## Tips For Best Results
-
-### Start With A Working Search URL
-
-- Open the LoopNet search in your browser first.
-- Use city and transaction pages that return visible listings.
-- Keep query strings out of the URL unless you need a specific filter.
-
-### Keep Test Runs Small
-
-- Use `results_wanted: 20` while checking a new market.
-- Increase `max_pages` after confirming the output looks right.
-- Match `results_wanted` to realistic listing availability.
-
-### Use Proxies For Reliability
-
-- Enable residential proxies for repeated or scheduled runs.
-- Keep proxy settings consistent across monitoring jobs.
-- Retry later if a market page temporarily blocks access.
-
----
+- **Start with a working URL** - Open the LoopNet search in your browser first and use a URL that returns visible listings.
+- **Test with a small limit** - Use `results_wanted: 20` while checking a new market before running larger collections.
+- **Match limits to availability** - Set `results_wanted` and `max_pages` based on realistic listing counts for your target market.
+- **Enable proxies for scheduled runs** - Use proxy configuration when running the Actor on a schedule to maintain collection reliability.
+- **Empty fields are normal** - Some listings do not include every field. Empty values are removed from each record automatically.
 
 ## Integrations
 
-Connect your data with:
-
-- **Google Sheets** - Review and filter listings with a team.
-- **Airtable** - Build a searchable property database.
-- **Make** - Trigger follow-up workflows after each run.
-- **Zapier** - Send new listings to other apps.
+- **Google Sheets** - Send listing data to spreadsheets for team analysis.
+- **Airtable** - Build a searchable property database from collected results.
+- **Make** - Trigger follow-up workflows after each collection run.
+- **Zapier** - Send new listings to other applications.
 - **Webhooks** - Deliver results to internal systems.
 
 ### Export Formats
@@ -213,8 +194,6 @@ Connect your data with:
 - **Excel** - For reports and sharing.
 - **XML** - For legacy integrations.
 
----
-
 ## Frequently Asked Questions
 
 ### Can I collect both sale and lease listings?
@@ -223,34 +202,47 @@ Yes. Use `listingType` with `for-sale` or `for-lease`, or provide a LoopNet URL 
 
 ### How many listings can I collect?
 
-You can collect up to your configured `results_wanted` value, limited by available results and `max_pages`.
+You can collect up to your configured `results_wanted` value, limited by available search results and the `max_pages` setting.
 
-### Why are some fields missing?
+### Why are some fields missing in the output?
 
-Some listings do not include every field. Empty values are removed from each record so the dataset stays clean.
+Some listings do not publish every data point. Empty fields are removed from each record so the dataset stays clean and readable.
 
 ### Can I monitor the same market over time?
 
-Yes. Schedule the actor with the same input and compare datasets by `listingId`, `url`, and `collectedAt`.
+Yes. Schedule the Actor with the same input and compare datasets across runs by `listingId`, `url`, and `collectedAt`.
 
-### Does the actor remove duplicates?
+### Does the Actor remove duplicate listings?
 
-Yes. Records are deduplicated by listing ID or URL before being saved.
+Yes. Records are deduplicated by listing ID or URL before being saved to the dataset.
 
----
+### Can I export the data to CSV or Excel?
+
+Yes. Apify datasets can be downloaded in CSV, Excel, JSON, XML, and other supported formats from Apify Console or the API.
+
+### Can I run this Actor on a schedule?
+
+Yes. You can schedule the Actor in Apify Console to refresh data hourly, daily, weekly, or at another interval.
+
+### Is this Actor suitable for non-technical users?
+
+Yes. The Actor can be run from Apify Console with form-based inputs, and the output can be downloaded without writing code.
+
+### Is it legal to scrape LoopNet?
+
+Scraping public web data can be legal, but you are responsible for complying with applicable laws, website terms, and privacy rules.
+
+## Related Actors
+
+- [Crexi Property Scraper](https://apify.com/shahidirfan/crexi-property-scraper) - Collect commercial real estate listings from Crexi.
+- [Realtor.com Scraper](https://apify.com/shahidirfan/realtor-com-scraper) - Extract residential and commercial property data from Realtor.com.
+- [Redfin Property Scraper](https://apify.com/shahidirfan/redfin-property-scraper) - Collect property listings and details from Redfin.
+- [Propertyfinder Scraper](https://apify.com/shahidirfan/propertyfinder-scraper) - Extract real estate listings from Propertyfinder.
 
 ## Support
 
-For issues or feature requests, contact support through the Apify Console.
-
-### Resources
-
-- [Apify Documentation](https://docs.apify.com/)
-- [Apify API Reference](https://docs.apify.com/api/v2)
-- [Scheduling Runs](https://docs.apify.com/platform/schedules)
-
----
+For issues, feature requests, or custom Actor work, use the Issues tab on the Actor page or contact the developer through Apify.
 
 ## Legal Notice
 
-This actor is designed for legitimate data collection purposes. Users are responsible for ensuring compliance with website terms of service and applicable laws. Use collected data responsibly.
+This Actor is designed for legitimate data collection from publicly available LoopNet search results. Users are responsible for complying with LoopNet's terms of service and applicable laws. Use collected data responsibly.
