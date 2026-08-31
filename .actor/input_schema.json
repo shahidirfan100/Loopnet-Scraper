@@ -45,7 +45,8 @@
             "description": "Use Apify Proxy to improve reliability.",
             "editor": "proxy",
             "default": {
-                "useApifyProxy": false
+                "useApifyProxy": true,
+                "apifyProxyGroups": ["RESIDENTIAL"]
             }
         }
     },

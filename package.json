@@ -6,7 +6,9 @@
     "dependencies": {
         "apify": "^3.6.0",
         "cheerio": "^1.2.0",
-        "patchright": "^1.61.1"
+        "impit": "^0.14.2",
+        "patchright": "^1.61.1",
+        "tough-cookie": "^6.0.2"
     },
     "scripts": {
         "start": "node src/main.js",
