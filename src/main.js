@@ -448,7 +448,7 @@ async function runImpitExtraction(startUrl, proxyUrl, resultsWanted, maxPages, s
 
 async function fetchSearchDataInBrowser(page, criteria, csrfToken, searchPage) {
     return page.evaluate(
-        async ({ criteriaForPage, csrfTokenForPage }) => {
+        async ({ criteriaForPage, csrfTokenForPage, searchPageForRequest }) => {
             const response = await fetch('/services/search', {
                 method: 'POST',
                 headers: {
@@ -461,7 +461,7 @@ async function fetchSearchDataInBrowser(page, criteria, csrfToken, searchPage) {
                     pageguid: `loopnet-api-${Date.now()}`,
                     criteria: {
                         ...criteriaForPage,
-                        PageNumber: searchPage,
+                        PageNumber: searchPageForRequest,
                     },
                     savedsearcheditmode: false,
                 }),
@@ -489,7 +489,7 @@ async function fetchSearchDataInBrowser(page, criteria, csrfToken, searchPage) {
         {
             criteriaForPage: criteria,
             csrfTokenForPage: csrfToken,
-            searchPage,
+            searchPageForRequest: searchPage,
         },
     );
 }
